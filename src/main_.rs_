@@ -1,0 +1,606 @@
+ 
+#![allow(non_snake_case)]
+
+use rand::Rng;
+// use rayon::{prelude::*, result};
+
+extern crate nalgebra as na;
+use na::{SMatrix, DMatrix, coordinates::X};
+
+extern crate argparse;
+use argparse::{ArgumentParser, Store};
+
+use plotters::prelude::*;
+
+mod mat_loader;
+use matio_rs::MatFile;
+
+use approx::assert_abs_diff_eq;
+
+macro_rules! dim {
+    ($var:expr) => {
+        println!("{} rows/columns: {}x{}", stringify!($var), $var.shape().0, $var.shape().1);
+    };
+}
+
+macro_rules! mat {
+    ($var:expr) => {
+        println!("{} =\n{}", stringify!($var), $var);
+    };
+}
+
+fn sigmoid(x: f64) -> f64 {
+    1.0 / (1.0 + (-x).exp())
+}
+
+fn sigmoid_derivative(x: f64) -> f64 {
+    sigmoid(x) * (1.0 - sigmoid(x))
+}
+
+fn forward_propagation(X: &DMatrix<f64>, W1: &DMatrix<f64>, W2: &DMatrix<f64>, b1: &DMatrix<f64>, b2: &DMatrix<f64>) -> (DMatrix<f64>, DMatrix<f64>, DMatrix<f64>, DMatrix<f64>) {
+
+
+    let a1_1 = X * W1;
+    let a1 = broadcast_add_row(&a1_1, &b1);
+
+    let z1 = a1.map(|x| sigmoid(x));
+
+    let a2_1 = &z1 * W2;
+    let a2 = broadcast_add_row(&a2_1, &b2);
+
+    let y_pred = a2.map(|x| sigmoid(x));
+
+
+    (a1, z1, a2, y_pred)
+}
+
+fn backward_propagation(y: &DMatrix<f64>, y_pred: &DMatrix<f64>, z2: &DMatrix<f64>, a1: &DMatrix<f64>, z1: &DMatrix<f64>, X: &DMatrix<f64>, W2: &DMatrix<f64>) -> (DMatrix<f64>, DMatrix<f64>){
+
+    let y_err = -(y-y_pred);
+
+    let delta2_1 = y_err;
+    let delta2_2 = z2.map(|x| sigmoid_derivative(x));
+
+    
+    let delta2 = delta2_1.component_mul(&delta2_2);
+
+    let dJ_dW2 = a1.transpose() * &delta2;
+
+    let delta1_1 = &delta2 * W2.transpose();
+    let delta1_2 = z1.map(|x| sigmoid_derivative(x));
+
+    let delta1 = delta1_1.component_mul(&delta1_2);
+    let dJ_dW1 = X.transpose() * delta1;
+    (dJ_dW1, dJ_dW2)
+}
+
+
+fn compute_cost(y: &DMatrix<f64>, a2: &DMatrix<f64>) -> f64 {
+    let cost = 0.5 * (y - a2).map(|x| x.powi(2)).sum();
+    cost
+}
+
+fn broadcast_add_row(a: &DMatrix<f64>, b: &DMatrix<f64>) -> DMatrix<f64> {
+    let mut result = DMatrix::from_element(a.nrows(), a.ncols(), 0.0);
+
+    // TODO Assert dimensions
+    for i in 0..a.nrows() {
+        for j in 0..a.ncols() {
+            // dbg!(i, j);
+            // dbg!(a[(i, j)]);
+            // dbg!(b[(0, j)]);
+            result[(i, j)] = a[(i, j)] + b[(0, j)];
+        }
+    }
+    result
+}
+
+fn validate(X: &DMatrix<f64>, y: &DMatrix<f64>, W1: &DMatrix<f64>, W2: &DMatrix<f64>, b1: &DMatrix<f64>, b2: &DMatrix<f64>) {
+    let (a1, 
+        z1, 
+        y_pred, 
+        z2) = forward_propagation(&X, &W1, &W2, &b1, &b2);
+
+    mat!(y);
+    mat!(y_pred);
+    mat!(y_pred.map(|x| sigmoid(x)));
+}
+
+
+pub fn chart(data: Vec<f64>) -> Result<(), Box<dyn std::error::Error>> {
+
+    // 1. Setup the drawing backend
+    let root = BitMapBackend::new("chart.png", (640, 480)).into_drawing_area();
+    root.fill(&WHITE)?;
+
+    let data_max = data.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+
+    // 2. Create a Chart Builder
+    let mut chart = ChartBuilder::on(&root)
+        .caption("Sample Chart", ("sans-serif", 40).into_font())
+        .x_label_area_size(30)
+        .y_label_area_size(30)
+        .build_cartesian_2d(0..data.len(), 0f64..2.0)?;
+
+    // 3. Configure the chart
+    chart.configure_mesh().draw()?;
+
+    // 4. Plot the data
+    chart.draw_series(LineSeries::new(
+        data.into_iter().enumerate().map(|(x, y)| (x, y)),
+        &RED,
+    ))?;
+
+    Ok(())
+}
+
+fn main_(){
+
+
+    let mat_file = MatFile::load("data.mat").unwrap();
+    let loaded_x: DMatrix<f64> = mat_file.var("X").unwrap();
+
+    mat!(loaded_x);
+
+}
+fn main() {
+
+    // Training data
+    let X = DMatrix::from_row_iterator(8, 3, [
+        0., 0., 0.,
+        0., 0., 1.,
+        0., 1., 0.,
+        0., 1., 1.,
+        1., 0., 0.,
+        1., 0., 1.,
+        1., 1., 0.,
+        1., 1., 1.,
+    ].iter().cloned());
+    
+    // Expected output
+    let y = DMatrix::from_row_iterator(8, 1, [
+        0.,
+        1.,
+        0.,
+        1.,
+        0.,
+        1.,
+        1.,
+        1.,
+    ].iter().cloned());
+    
+    // Layer sizes
+    let input_no = 3;
+    let output_no = 1;
+    let hidden_no = 4;
+
+    // let mut W1 = DMatrix::from_row_iterator(input_no, hidden_no, (0..input_no*hidden_no).map(|_| rand::random::<f64>()));
+    // let mut W2 = DMatrix::from_row_iterator(hidden_no, output_no, (0..hidden_no*output_no).map(|_| rand::random::<f64>()));
+
+    let mut W1 = DMatrix::from_row_iterator(3, 4, [
+        -0.3304277892475917f64, 0.07319482102131787f64, 1.6744720323697577f64, -0.4488102786811474f64, 
+        -0.05467106741602908f64, 0.2970666981430254f64, -0.27297781459242487f64, -0.3481894925579648f64, 
+        1.2171220433527727f64, 1.2668381415218992f64, 2.2803928273041523f64, 0.9092880383392863f64, 
+    ]);
+    let mut W2 = DMatrix::from_row_iterator(4, 1, [
+        -0.7483245950543221f64, 
+        0.08349494653391352f64, 
+        1.8503973396818603f64, 
+        1.5661730766530717f64, 
+    ]);
+    
+
+    let b1 = DMatrix::from_row_iterator(1, hidden_no, (0..hidden_no).map(|_| 1.0));
+    let b2 = DMatrix::from_row_iterator(1, output_no, (0..output_no).map(|_| 1.0));
+
+    println!("X dimension (r/c): {} {}", &X.shape().0, &X.shape().1);
+    println!("W1 dimension (r/c): {} {}", &W1.shape().0, &W1.shape().1);
+    println!("b1 dimension (r/c): {} {}", &b1.shape().0, &b1.shape().1);
+
+    // Check input data
+    let mat_file = MatFile::load("data.mat").unwrap();
+    let py_X: DMatrix<f64> = mat_file.var("X").unwrap();
+    let py_y: DMatrix<f64> = mat_file.var("y").unwrap();
+    let py_b1: DMatrix<f64> = mat_file.var("b1").unwrap();
+    let py_b2: DMatrix<f64> = mat_file.var("b2").unwrap();
+    assert_abs_diff_eq!(X, py_X, epsilon = 1e-9);
+    assert_abs_diff_eq!(y, py_y, epsilon = 1e-9);
+    assert_abs_diff_eq!(b1, py_b1, epsilon = 1e-9);
+    assert_abs_diff_eq!(b2, py_b2, epsilon = 1e-9);
+
+
+    // Train
+
+    let alpha = 0.05;
+    let n_iterations = 4000;
+
+    let mut cost_vec: Vec<f64> = Vec::new();
+
+    for i in 0..n_iterations {
+        let forward_result = forward_propagation(&X, &W1, &W2, &b1, &b2);
+        let (a1, 
+            z1, 
+            a2, 
+            y_pred) = forward_result;
+
+        let backwards_result = backward_propagation(&y, &y_pred, &z2, &a1, &z1, &X, &W2);
+        let (dJ_dW1, dJ_dW2) = backwards_result;
+
+        W1 = W1 - alpha * dJ_dW1;
+        W2 = W2 - alpha * dJ_dW2;
+
+        let cost = compute_cost(&y, &y_pred);
+        println!("__________________Iteration: {}, Cost: {}", i, cost);
+        cost_vec.push(cost);
+
+        // Check iteration data
+        let py_a1: DMatrix<f64> = mat_file.var(format!("a1_{}", i)).unwrap();
+        let py_z1: DMatrix<f64> = mat_file.var(format!("z1_{}", i)).unwrap();
+        let py_y_pred: DMatrix<f64> = mat_file.var(format!("y_pred_{}", i)).unwrap();
+        let py_z2: DMatrix<f64> = mat_file.var(format!("z2_{}", i)).unwrap();
+        let py_W1: DMatrix<f64> = mat_file.var(format!("W1_{}", i)).unwrap();
+        let py_W2: DMatrix<f64> = mat_file.var(format!("W2_{}", i)).unwrap();
+
+        mat!(a1);
+        mat!(py_a1);
+
+
+        assert_abs_diff_eq!(a1, py_a1, epsilon = 1e-9);
+        assert_abs_diff_eq!(z1, py_z1, epsilon = 1e-9);
+        assert_abs_diff_eq!(y_pred, py_y_pred, epsilon = 1e-9);
+        assert_abs_diff_eq!(z2, py_z2, epsilon = 1e-9);
+        assert_abs_diff_eq!(W1, py_W1, epsilon = 1e-9);
+        assert_abs_diff_eq!(W2, py_W2, epsilon = 1e-9);
+
+    }
+
+    _ = chart(cost_vec);
+
+
+    // Validate
+    validate(&X, &y, &W1, &W2, &b1, &b2)
+    
+}
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use approx::assert_abs_diff_eq;
+
+    #[test]
+    fn test_broadcast_add_row() {
+        let a = DMatrix::from_element(4, 4, 1.0);
+        let b = DMatrix::from_iterator(1, 4, [0., 0., 1., 1.,].iter().cloned());
+
+        let result = broadcast_add_row(&a, &b);
+
+        mat!(a);
+        mat!(b);
+        mat!(result);
+
+        assert_eq!(result[(0, 0)], 1.0);
+        assert_eq!(result[(0, 1)], 1.0);
+        assert_eq!(result[(0, 2)], 2.0);
+        assert_eq!(result[(0, 3)], 2.0);
+        
+        assert_eq!(result[(1, 0)], 1.0);
+        assert_eq!(result[(1, 1)], 1.0);
+        assert_eq!(result[(1, 2)], 2.0);
+        assert_eq!(result[(1, 3)], 2.0);
+        
+        assert_eq!(result[(2, 0)], 1.0);
+        assert_eq!(result[(2, 1)], 1.0);
+        assert_eq!(result[(2, 2)], 2.0);
+        assert_eq!(result[(2, 3)], 2.0);
+        
+        assert_eq!(result[(3, 0)], 1.0);
+        assert_eq!(result[(3, 1)], 1.0);
+        assert_eq!(result[(3, 2)], 2.0);
+        assert_eq!(result[(3, 3)], 2.0);
+    }
+
+    #[test]
+    fn test_forward_propagation() {
+        let X = DMatrix::from_row_iterator(8, 3, [
+            0f64, 0f64, 0f64, 
+            0f64, 0f64, 1f64, 
+            0f64, 1f64, 0f64, 
+            0f64, 1f64, 1f64, 
+            1f64, 0f64, 0f64, 
+            1f64, 0f64, 1f64, 
+            1f64, 1f64, 0f64, 
+            1f64, 1f64, 1f64, 
+        ]);
+        let W1 = DMatrix::from_row_iterator(3, 4, [
+            -0.3304277892475917f64, 0.07319482102131787f64, 1.6744720323697577f64, -0.4488102786811474f64, 
+            -0.05467106741602908f64, 0.2970666981430254f64, -0.27297781459242487f64, -0.3481894925579648f64, 
+            1.2171220433527727f64, 1.2668381415218992f64, 2.2803928273041523f64, 0.9092880383392863f64, 
+        ]);
+        let W2 = DMatrix::from_row_iterator(4, 1, [
+            -0.7483245950543221f64, 
+            0.08349494653391352f64, 
+            1.8503973396818603f64, 
+            1.5661730766530717f64, 
+        ]);
+        let b1 = DMatrix::from_row_iterator(1, 4, [
+            1.0f64, 1.0f64, 1.0f64, 1.0f64, 
+        ]);
+        let b2 = DMatrix::from_row_iterator(1, 1, [
+            1.0f64, 
+        ]);
+        let a1 = DMatrix::from_row_iterator(8, 4, [
+            1.0f64, 1.0f64, 1.0f64, 1.0f64, 
+            2.2171220433527727f64, 2.266838141521899f64, 3.2803928273041523f64, 1.9092880383392863f64, 
+            0.9453289325839709f64, 1.2970666981430254f64, 0.7270221854075751f64, 0.6518105074420353f64, 
+            2.1624509759367436f64, 2.5639048396649247f64, 3.0074150127117276f64, 1.5610985457813216f64, 
+            0.6695722107524082f64, 1.0731948210213178f64, 2.6744720323697577f64, 0.5511897213188526f64, 
+            1.886694254105181f64, 2.340032962543217f64, 4.9548648596739095f64, 1.4604777596581389f64, 
+            0.6149011433363792f64, 1.3702615191643432f64, 2.4014942177773326f64, 0.20300022876088786f64, 
+            1.832023186689152f64, 2.6370996606862427f64, 4.681887045081485f64, 1.1122882671001741f64, 
+        ]);
+        let z1 = DMatrix::from_row_iterator(8, 4, [
+            0.7310585786300049f64, 0.7310585786300049f64, 0.7310585786300049f64, 0.7310585786300049f64, 
+            0.9017765736032386f64, 0.9060930955174612f64, 0.9637500099122779f64, 0.8709391415387309f64, 
+            0.7201748190982078f64, 0.7853408992379043f64, 0.6741514718224509f64, 0.6574183403296164f64, 
+            0.8968265547985858f64, 0.9285021183093457f64, 0.9529079904051592f64, 0.8265109306383219f64, 
+            0.6614073634166833f64, 0.7452040075208385f64, 0.9355033856082364f64, 0.6344115713754857f64, 
+            0.8683781518490443f64, 0.9121387268798409f64, 0.9930003082331603f64, 0.8116057360044974f64, 
+            0.6490580068364507f64, 0.7974224026382557f64, 0.9169411741379518f64, 0.5505764920828569f64, 
+            0.8620025695701917f64, 0.933211419438745f64, 0.9908234681574338f64, 0.7525554689918103f64, 
+        ]);
+        let a2 = DMatrix::from_row_iterator(8, 1, [
+            3.011683694476724f64, 
+            3.5481944946352053f64, 
+            2.8037264612478436f64, 
+            3.4641254438037583f64, 
+            3.291924669968382f64, 
+            3.534890426641239f64, 
+            3.139878258548465f64, 
+            3.4449099375573455f64, 
+        ]);
+        let y_pred = DMatrix::from_row_iterator(8, 1, [
+            0.9530991748232451f64, 
+            0.9720283777652073f64, 
+            0.9428768631721062f64, 
+            0.9696496109380244f64, 
+            0.9641507380491391f64, 
+            0.9716643700970408f64, 
+            0.958508039265019f64, 
+            0.9690789810131822f64, 
+        ]);
+
+        let (
+            a1_, 
+            z1_, 
+            a2_, 
+            y_pred_
+        ) = forward_propagation(&X, &W1, &W2, &b1, &b2);
+
+        assert_abs_diff_eq!(a1, a1_, epsilon = 1e-9);
+        assert_abs_diff_eq!(z1, z1_, epsilon = 1e-9);
+        assert_abs_diff_eq!(a2, a2_, epsilon = 1e-9);
+        assert_abs_diff_eq!(y_pred, y_pred_, epsilon = 1e-9);
+
+    }
+    
+    #[test]
+    fn test_forward_propagation_2() {
+        let X = DMatrix::from_row_iterator(8, 3, [
+            0.0f64, 0.0f64, 0.0f64, 
+            0.0f64, 0.0f64, 1.0f64, 
+            0.0f64, 1.0f64, 0.0f64, 
+            0.0f64, 1.0f64, 1.0f64, 
+            1.0f64, 0.0f64, 0.0f64, 
+            1.0f64, 0.0f64, 1.0f64, 
+            1.0f64, 1.0f64, 0.0f64, 
+            1.0f64, 1.0f64, 1.0f64, 
+        ]);
+        let W1 = DMatrix::from_row_iterator(3, 4, [
+            -0.3304277892475917f64, 0.07319482102131787f64, 1.6744720323697577f64, -0.4488102786811474f64, 
+            -0.05467106741602908f64, 0.2970666981430254f64, -0.27297781459242487f64, -0.3481894925579648f64, 
+            1.2171220433527727f64, 1.2668381415218992f64, 2.2803928273041523f64, 0.9092880383392863f64, 
+        ]);
+        let W2 = DMatrix::from_row_iterator(4, 1, [
+            -0.7483245950543221f64, 
+            0.08349494653391352f64, 
+            1.8503973396818603f64, 
+            1.5661730766530717f64, 
+        ]);
+        let b1 = DMatrix::from_row_iterator(1, 4, [
+            1.0f64, 1.0f64, 1.0f64, 1.0f64, 
+        ]);
+        let b2 = DMatrix::from_row_iterator(1, 1, [
+            1.0f64, 
+        ]);
+        let a1 = DMatrix::from_row_iterator(8, 4, [
+            1.0f64, 1.0f64, 1.0f64, 1.0f64, 
+            2.2171220433527727f64, 2.266838141521899f64, 3.2803928273041523f64, 1.9092880383392863f64, 
+            0.9453289325839709f64, 1.2970666981430254f64, 0.7270221854075751f64, 0.6518105074420353f64, 
+            2.1624509759367436f64, 2.5639048396649247f64, 3.0074150127117276f64, 1.5610985457813216f64, 
+            0.6695722107524082f64, 1.0731948210213178f64, 2.6744720323697577f64, 0.5511897213188526f64, 
+            1.886694254105181f64, 2.340032962543217f64, 4.9548648596739095f64, 1.4604777596581389f64, 
+            0.6149011433363792f64, 1.3702615191643432f64, 2.4014942177773326f64, 0.20300022876088786f64, 
+            1.832023186689152f64, 2.6370996606862427f64, 4.681887045081485f64, 1.1122882671001741f64, 
+        ]);
+        let z1 = DMatrix::from_row_iterator(8, 4, [
+            0.7310585786300049f64, 0.7310585786300049f64, 0.7310585786300049f64, 0.7310585786300049f64, 
+            0.9017765736032386f64, 0.9060930955174612f64, 0.9637500099122779f64, 0.8709391415387309f64, 
+            0.7201748190982078f64, 0.7853408992379043f64, 0.6741514718224509f64, 0.6574183403296164f64, 
+            0.8968265547985858f64, 0.9285021183093457f64, 0.9529079904051592f64, 0.8265109306383219f64, 
+            0.6614073634166833f64, 0.7452040075208385f64, 0.9355033856082364f64, 0.6344115713754857f64, 
+            0.8683781518490443f64, 0.9121387268798409f64, 0.9930003082331603f64, 0.8116057360044974f64, 
+            0.6490580068364507f64, 0.7974224026382557f64, 0.9169411741379518f64, 0.5505764920828569f64, 
+            0.8620025695701917f64, 0.933211419438745f64, 0.9908234681574338f64, 0.7525554689918103f64, 
+        ]);
+        let a2 = DMatrix::from_row_iterator(8, 1, [
+            3.011683694476724f64, 
+            3.5481944946352053f64, 
+            2.8037264612478436f64, 
+            3.4641254438037583f64, 
+            3.291924669968382f64, 
+            3.534890426641239f64, 
+            3.139878258548465f64, 
+            3.4449099375573455f64, 
+        ]);
+        let y_pred = DMatrix::from_row_iterator(8, 1, [
+            0.9530991748232451f64, 
+            0.9720283777652073f64, 
+            0.9428768631721062f64, 
+            0.9696496109380244f64, 
+            0.9641507380491391f64, 
+            0.9716643700970408f64, 
+            0.958508039265019f64, 
+            0.9690789810131822f64, 
+        ]);        
+
+        let (
+            a1_, 
+            z1_, 
+            a2_, 
+            y_pred_
+        ) = forward_propagation(&X, &W1, &W2, &b1, &b2);
+
+        assert_abs_diff_eq!(a1, a1_, epsilon = 1e-9);
+        assert_abs_diff_eq!(z1, z1_, epsilon = 1e-9);
+        assert_abs_diff_eq!(a2, a2_, epsilon = 1e-9);
+        assert_abs_diff_eq!(y_pred, y_pred_, epsilon = 1e-9);
+
+    }
+
+    #[test]
+    fn test_np_dot() {
+
+        let X = DMatrix::from_row_iterator(8, 3, [
+            0f64, 0f64, 0f64, 
+            0f64, 0f64, 1f64, 
+            0f64, 1f64, 0f64, 
+            0f64, 1f64, 1f64, 
+            1f64, 0f64, 0f64, 
+            1f64, 0f64, 1f64, 
+            1f64, 1f64, 0f64, 
+            1f64, 1f64, 1f64, 
+        ]);
+        let W1 = DMatrix::from_row_iterator(3, 4, [
+            -0.3304277892475917f64, 0.07319482102131787f64, 1.6744720323697577f64, -0.4488102786811474f64, 
+            -0.05467106741602908f64, 0.2970666981430254f64, -0.27297781459242487f64, -0.3481894925579648f64, 
+            1.2171220433527727f64, 1.2668381415218992f64, 2.2803928273041523f64, 0.9092880383392863f64, 
+        ]);
+
+        let a1_1 = DMatrix::from_row_iterator(8, 4, [
+            0.0f64, 0.0f64, 0.0f64, 0.0f64, 
+            1.2171220433527727f64, 1.2668381415218992f64, 2.2803928273041523f64, 0.9092880383392863f64, 
+            -0.05467106741602908f64, 0.2970666981430254f64, -0.27297781459242487f64, -0.3481894925579648f64, 
+            1.1624509759367436f64, 1.5639048396649247f64, 2.0074150127117276f64, 0.5610985457813216f64, 
+            -0.3304277892475917f64, 0.07319482102131787f64, 1.6744720323697577f64, -0.4488102786811474f64, 
+            0.886694254105181f64, 1.340032962543217f64, 3.95486485967391f64, 0.46047775965813886f64, 
+            -0.38509885666362076f64, 0.37026151916434324f64, 1.4014942177773329f64, -0.7969997712391121f64, 
+            0.832023186689152f64, 1.6370996606862425f64, 3.681887045081485f64, 0.11228826710017414f64, 
+        ]);
+
+        let a1_1_ = X * W1;
+        assert_abs_diff_eq!(a1_1, a1_1_, epsilon = 1e-9);
+        
+    }
+
+
+    #[test]
+    fn test_backward_propagation() {
+        let X = DMatrix::from_row_iterator(8, 3, [
+            0f64, 0f64, 0f64, 
+            0f64, 0f64, 1f64, 
+            0f64, 1f64, 0f64, 
+            0f64, 1f64, 1f64, 
+            1f64, 0f64, 0f64, 
+            1f64, 0f64, 1f64, 
+            1f64, 1f64, 0f64, 
+            1f64, 1f64, 1f64, 
+        ]);
+        let W1 = DMatrix::from_row_iterator(3, 4, [
+            -0.3304277892475917f64, 0.07319482102131787f64, 1.6744720323697577f64, -0.4488102786811474f64, 
+            -0.05467106741602908f64, 0.2970666981430254f64, -0.27297781459242487f64, -0.3481894925579648f64, 
+            1.2171220433527727f64, 1.2668381415218992f64, 2.2803928273041523f64, 0.9092880383392863f64, 
+        ]);
+        let W2 = DMatrix::from_row_iterator(4, 1, [
+            -0.7483245950543221f64, 
+            0.08349494653391352f64, 
+            1.8503973396818603f64, 
+            1.5661730766530717f64, 
+        ]);
+        let b1 = DMatrix::from_row_iterator(1, 4, [
+            1.0f64, 1.0f64, 1.0f64, 1.0f64, 
+        ]);
+        let b2 = DMatrix::from_row_iterator(1, 1, [
+            1.0f64, 
+        ]);
+        let y = DMatrix::from_row_iterator(8, 1, [
+            0f64, 
+            1f64, 
+            0f64, 
+            1f64, 
+            0f64, 
+            1f64, 
+            1f64, 
+            1f64, 
+        ]);
+        let y_pred = DMatrix::from_row_iterator(8, 1, [
+            0.9530991748232451f64, 
+            0.9720283777652073f64, 
+            0.9428768631721062f64, 
+            0.9696496109380244f64, 
+            0.9641507380491391f64, 
+            0.9716643700970408f64, 
+            0.958508039265019f64, 
+            0.9690789810131822f64, 
+        ]);
+        let z2 = DMatrix::from_row_iterator(8, 1, [
+            3.011683694476724f64, 
+            3.5481944946352053f64, 
+            2.8037264612478436f64, 
+            3.4641254438037583f64, 
+            3.291924669968382f64, 
+            3.534890426641239f64, 
+            3.139878258548465f64, 
+            3.4449099375573455f64, 
+        ]);
+        let a1 = DMatrix::from_row_iterator(8, 4, [
+            0.7310585786300049f64, 0.7310585786300049f64, 0.7310585786300049f64, 0.7310585786300049f64, 
+            0.9017765736032386f64, 0.9060930955174612f64, 0.9637500099122779f64, 0.8709391415387309f64, 
+            0.7201748190982078f64, 0.7853408992379043f64, 0.6741514718224509f64, 0.6574183403296164f64, 
+            0.8968265547985858f64, 0.9285021183093457f64, 0.9529079904051592f64, 0.8265109306383219f64, 
+            0.6614073634166833f64, 0.7452040075208385f64, 0.9355033856082364f64, 0.6344115713754857f64, 
+            0.8683781518490443f64, 0.9121387268798409f64, 0.9930003082331603f64, 0.8116057360044974f64, 
+            0.6490580068364507f64, 0.7974224026382557f64, 0.9169411741379518f64, 0.5505764920828569f64, 
+            0.8620025695701917f64, 0.933211419438745f64, 0.9908234681574338f64, 0.7525554689918103f64, 
+        ]);
+        let z1 = DMatrix::from_row_iterator(8, 4, [
+            1.0f64, 1.0f64, 1.0f64, 1.0f64, 
+            2.2171220433527727f64, 2.266838141521899f64, 3.2803928273041523f64, 1.9092880383392863f64, 
+            0.9453289325839709f64, 1.2970666981430254f64, 0.7270221854075751f64, 0.6518105074420353f64, 
+            2.1624509759367436f64, 2.5639048396649247f64, 3.0074150127117276f64, 1.5610985457813216f64, 
+            0.6695722107524082f64, 1.0731948210213178f64, 2.6744720323697577f64, 0.5511897213188526f64, 
+            1.886694254105181f64, 2.340032962543217f64, 4.9548648596739095f64, 1.4604777596581389f64, 
+            0.6149011433363792f64, 1.3702615191643432f64, 2.4014942177773326f64, 0.20300022876088786f64, 
+            1.832023186689152f64, 2.6370996606862427f64, 4.681887045081485f64, 1.1122882671001741f64, 
+        ]);
+        
+        let dJ_dW1 = DMatrix::from_row_iterator(3, 4, [
+            -0.005154305750653262f64, 0.0004960222148121253f64, 0.003462465220027359f64, 0.011008696715368834f64, 
+            -0.007232777843943662f64, 0.0006827790165204428f64, 0.020320098322354898f64, 0.016802668098409648f64, 
+            0.0002614617093676585f64, -2.03961325076149e-05f64, -0.00014895338789806085f64, -0.0007915220303829128f64, 
+        ]);
+        let dJ_dW2 = DMatrix::from_row_iterator(4, 1, [
+            0.08572675370337295f64, 
+            0.09145211623970248f64, 
+            0.09176792432195069f64, 
+            0.08203459630512447f64, 
+        ]);
+        
+
+        let (dJ_dW1_, dJ_dW2_) = backward_propagation(&y, &y_pred, &z2, &a1, &z1, &X, &W2);
+
+        assert_abs_diff_eq!(dJ_dW1, dJ_dW1_, epsilon = 1e-9);
+        assert_abs_diff_eq!(dJ_dW2, dJ_dW2_, epsilon = 1e-9);
+    }
+}
