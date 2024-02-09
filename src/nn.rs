@@ -262,7 +262,7 @@ impl NeuralNetwork {
         let output_out = &output_in.map(|x| utils::sigmoid(x));
 
 
-        dim!(output_out);
+        // dim!(output_out);
 
         let vec_out: DVector<f64> = output_out.column(0).into();
         vec_out
@@ -295,22 +295,22 @@ impl NeuralNetwork {
                 // let y_pred_row: RowDVector<f64> = y_pred.row(i).into();
                 let y_row: RowDVector<f64> = target.row(i).into();
 
-                self.fit2(&input_row,&y_row, alpha/x.nrows() as f64);
+                self.fit(&input_row,&y_row, alpha/x.nrows() as f64);
 
-                // let (dC_dW_1, dC_dW_L, delta_1, delta_L, sample_cost) = self.fit(&input_row,&y_row, alpha/x.nrows() as f64);
+                let (dC_dW_1, dC_dW_L, delta_1, delta_L, sample_cost) = self.fit(&input_row,&y_row, alpha/x.nrows() as f64);
 
-                // // dim!(self.weights[1]);
-                // // dim!((alpha/(x.nrows() as f64)) * &dC_dW_1);
+                // dim!(self.weights[1]);
+                // dim!((alpha/(x.nrows() as f64)) * &dC_dW_1);
 
-                // // Update weights
-                // self.weights[1] = &self.weights[1] - (alpha/(x.nrows() as f64)) * &dC_dW_L;
-                // self.weights[0] = &self.weights[0] - (alpha/(x.nrows() as f64)) * &dC_dW_1;
+                // Update weights
+                self.weights[1] = &self.weights[1] - (alpha/(x.nrows() as f64)) * &dC_dW_L;
+                self.weights[0] = &self.weights[0] - (alpha/(x.nrows() as f64)) * &dC_dW_1;
 
-                // // Update biases
-                // self.biases[1] = &self.biases[1] - (alpha/(x.nrows() as f64)) * delta_L;
-                // self.biases[0] = &self.biases[0] - (alpha/(x.nrows() as f64)) * delta_1;
+                // Update biases
+                self.biases[1] = &self.biases[1] - (alpha/(x.nrows() as f64)) * delta_L;
+                self.biases[0] = &self.biases[0] - (alpha/(x.nrows() as f64)) * delta_1;
 
-                // cost += sample_cost / (x.nrows() as f64);
+                cost += sample_cost / (x.nrows() as f64);
             }
 
             if(n % 1000 == 0){

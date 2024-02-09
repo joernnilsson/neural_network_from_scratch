@@ -75,7 +75,7 @@ fn main(){
         0.,
     ].iter().cloned());
 
-    nn.train(&x, &y, 0.1, 10000);
+    nn.train(&x, &y, 5.0, 10000);
 
 
     let test: na::Matrix<f64, na::Dyn, na::Dyn, na::VecStorage<f64, na::Dyn, na::Dyn>> = DMatrix::from_row_iterator(4, 2, [
@@ -93,7 +93,7 @@ fn main(){
         let result = nn.predict(&x_row.into());
 
         let cost = nn.cost(&y_row.into(), &result);
-        println!("{} XOR {} = {}, expected: {} (cost: {})", x_row[0], x_row[1], result[0], y_row[0],cost);
+        println!("{} XOR {} = {:.5}, expected: {} (cost: {:.5})", x_row[0], x_row[1], result[0], y_row[0],cost);
     });
 
     // test.row_iter().for_each(|row| {
@@ -148,8 +148,8 @@ fn main_(){
     }
 
     // Fit
-    let alpha = 0.1;
-    let epochs = 1000;
+    let alpha = 100.0;
+    let epochs = 10000;
     for i in 0..epochs{
         for row_idx in 0..x_bias.nrows(){
             let x_row: na::Matrix<f64, na::Const<1>, na::Dyn, na::ViewStorage<'_, f64, na::Const<1>, na::Dyn, na::Const<1>, na::Dyn>> = x_bias.row(row_idx);
