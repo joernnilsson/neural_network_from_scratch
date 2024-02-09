@@ -5,7 +5,7 @@
 // use rayon::{prelude::*, result};
 
 extern crate nalgebra as na;
-use na::{DMatrix, DVector};
+use na::{DMatrix, DVector, RowVector1};
 
 extern crate argparse;
 // use argparse::{ArgumentParser, Store};
@@ -75,7 +75,7 @@ fn main(){
         0.,
     ].iter().cloned());
 
-    nn.train(&x, &y, 0.05, 1000);
+    nn.train(&x, &y, 0.1, 10000);
 
 
     let test: na::Matrix<f64, na::Dyn, na::Dyn, na::VecStorage<f64, na::Dyn, na::Dyn>> = DMatrix::from_row_iterator(4, 2, [
@@ -86,13 +86,21 @@ fn main(){
     ].iter().cloned());
 
 
-    let bias = DVector::from_element(test.nrows(), 1.0);
-    let test_bias = utils::append_column(&test, &bias);
+    // let bias = DVector::from_element(test.nrows(), 1.0);
+    // let test_bias = utils::append_column(&test, &bias);
 
-    test_bias.row_iter().for_each(|row| {
-        let result = nn.predict(&row.into());
-        println!("{} XOR {} = {}", row[0], row[1], result[0]);
+    x.row_iter().zip(y.row_iter()).for_each(|(x_row, y_row)| {
+        let result = nn.predict(&x_row.into());
+
+        let cost = nn.cost(&y_row.into(), &result);
+        println!("{} XOR {} = {}, expected: {} (cost: {})", x_row[0], x_row[1], result[0], y_row[0],cost);
     });
+
+    // test.row_iter().for_each(|row| {
+    //     let result = nn.predict(&row.into());
+    //     let cost = nn.cost(&row.into(), &result);
+    //     println!("{} XOR {} = {} (cost: {})", row[0], row[1], result[0]), cost;
+    // });
 
 }
 
