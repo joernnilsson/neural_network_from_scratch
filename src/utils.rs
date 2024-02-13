@@ -4,23 +4,18 @@ use csv::Writer;
 use std::error::Error;
 use std::fs::File;
 
+#[macro_export]
 macro_rules! dim {
     ($var:expr) => {
         println!("{} rows/columns: {}x{}", stringify!($var), $var.shape().0, $var.shape().1);
     };
 }
 
+#[macro_export]
 macro_rules! mat {
     ($var:expr) => {
         println!("{} =\n{}", stringify!($var), $var);
     };
-}
-
-pub fn append_column(matrix: &DMatrix<f64>, column: &DVector<f64>) -> DMatrix<f64> {
-   let mut extended_matrix = DMatrix::<f64>::zeros(matrix.shape().0, matrix.shape().1 + 1);
-   extended_matrix.slice_mut((0, 0), matrix.shape()).copy_from(&matrix); // Copy the original matrix into the new matrix
-   extended_matrix.column_mut(matrix.shape().1).copy_from(&column); // Copy the new column into the new matrix
-   extended_matrix
 }
 
 pub fn sigmoid(x: f64) -> f64 {

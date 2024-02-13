@@ -1,28 +1,24 @@
 use std::vec;
 
 use nalgebra::{DMatrix, DVector, RowDVector};
-use crate::utils;
+use crate::{dim, mat, utils};
 
-macro_rules! dim {
-    ($var:expr) => {
-        println!("{} rows/columns: {}x{}", stringify!($var), $var.shape().0, $var.shape().1);
-    };
-}
 
-macro_rules! mat {
-    ($var:expr) => {
-        println!("{} =\n{}", stringify!($var), $var);
-    };
-}
+// macro_rules! dim {
+//     ($var:expr) => {
+//         println!("{} rows/columns: {}x{}", stringify!($var), $var.shape().0, $var.shape().1);
+//     };
+// }
+
+// macro_rules! mat {
+//     ($var:expr) => {
+//         println!("{} =\n{}", stringify!($var), $var);
+//     };
+// }
 
 pub struct NeuralNetwork {
     spec: Vec<u64>,
-    spec_internal: Vec<u64>,
-
-    // input_dim: u64,
-    // output_dim: u64,
-    // hidden_layers_dim: Vec<u64>,
-
+    // spec_internal: Vec<u64>,
     weights: Vec<DMatrix<f64>>,
     biases: Vec<DVector<f64>>,
 }
@@ -37,92 +33,46 @@ impl NeuralNetwork {
         // At least 1 hidden layer
         assert!(spec.len() > 2);
 
-        // Only one hidden layer supported for now
-        assert!(spec.len() == 3);
+        let weights = spec.windows(2).map(|s| { make_weights_matrix(s[0], s[1])}).collect();
 
-        // let spec_internal = vec![spec[0] + 1, spec[1] + 1, spec[spec.len()-1]];
-        let spec_internal = vec![spec[0], spec[1], spec[spec.len()-1]];
-
-        let weights = vec![
-            make_weights_matrix(spec_internal[0], spec_internal[1]),
-            make_weights_matrix(spec_internal[1], spec_internal[2]),
-        ];
-
-        let biases = vec![
-            DVector::from_element(spec_internal[1] as usize, 1.0),
-            DVector::from_element(spec_internal[2] as usize, 1.0),
-        ];
+        let biases = spec.iter().skip(1).map(|s| {DVector::from_element(*s as usize, 1.0)}).collect();
 
         let nn = NeuralNetwork {
             spec: spec.clone(),
-            spec_internal: spec_internal,
-            // input_dim: spec[0] + 1,
-            // output_dim: spec[spec.len()-1],
-            // hidden_layers_dim: vec![spec[1] + 1],
             weights: weights,
             biases: biases,
         };
         nn
     }
 
-    pub fn forward(&self, input: &DMatrix<f64>) -> DMatrix<f64>{
+    /**
+     * Takes a single sample input and propagates it through the network
+     * Return tuple of activations and z values for each layer
+     */
+    pub fn forward_sample(&self, input: &DVector<f64>) -> (Vec<DVector<f64>>, Vec<DVector<f64>>){
 
-        // Propagate trhough all layers
-        self.weights.iter().fold(input.clone(), |acc, weight| {
-            self.forward_single_layer(&acc, weight)
-        })
+        let mut a_v: Vec<DVector<f64>> = Vec::new();
+        let mut z_v: Vec<DVector<f64>> = Vec::new();
+
+        a_v.push(input.clone());
+
+        let _ = self.weights.iter().zip(self.biases.iter()).fold(input.clone(), |acc, (weight, bias)| {
+            let z = weight * &acc + bias;
+            let a = z.map(|x| utils::sigmoid(x));
+            
+            let a_copy = a.clone();
+
+            z_v.push(z);
+            a_v.push(a);
+
+            a_copy
+        });
+
+        (z_v, a_v)
     }
 
-    pub fn forward_single_layer(&self, input: &DMatrix<f64>, weights: &DMatrix<f64>) -> DMatrix<f64> {
-
-        dim!(input);
-        dim!(weights);
-
-        // Each row of x is a training example
-        let layer_input = input * weights;
-    
-        // Apply activation function to all elements
-        let layer_value = layer_input.map(|x| utils::sigmoid(x));
-    
-        layer_value
-    }
-
-    pub fn partial_derivative(&self, y_pred: &DMatrix<f64>, y_target: &DMatrix<f64>) -> DMatrix<f64> {
-        let error = y_pred - y_target;
-
-        dim!(error);
-        dim!(y_pred);
-
-        // Storage for deltas
-        let mut delta: nalgebra::Matrix<f64, nalgebra::Dyn, nalgebra::Dyn, nalgebra::VecStorage<_, nalgebra::Dyn, nalgebra::Dyn>> = DMatrix::zeros(y_pred.nrows(), self.spec.len() - 1);
-
-        // TODO First, try to do this with a single target/y_pred pair
-
-        // Calculate delta for output layer
-        let delta_output = error.component_mul(&y_pred.map(|x| utils::sigmoid_derivative(x)));
-        let delta_output_vector = DVector::from_column_slice(delta_output.as_slice());
-        delta.set_column(delta.ncols()-1, &delta_output_vector);
-
-        // Calculate delta for hidden layers
-        for i in (0..(self.weights.len()-1)).rev() {
-            dim!(delta.column(i+1));
-            dim!(self.weights[i].transpose());
-            let delta_hidden = delta.column(i+1) * self.weights[i].transpose();
-            let delta_hidden_vector = DVector::from_column_slice(delta_hidden.as_slice());
-            delta.set_column(i, &delta_hidden_vector);
-            println!("i: {}", i);
-        }         
-        println!("w: {}", self.weights.len());
-        mat!(delta);
-
-        dim!(delta);
-
-
-
-        delta
-    }
-
-    pub fn fit2(&self, input: &RowDVector<f64>, y_target: &RowDVector<f64>, alpha: f64) -> (Vec<DVector<f64>>, Vec<DMatrix<f64>>){
+    pub fn fit(&self, input: &RowDVector<f64>, y_target: &RowDVector<f64>, alpha: f64) -> (Vec<DMatrix<f64>>, Vec<DVector<f64>>, f64) {
+        // pub fn fit(&self, input: &RowDVector<f64>, y_target: &RowDVector<f64>, alpha: f64) -> (DMatrix<f64>, DMatrix<f64>, DVector<f64>, DVector<f64>, f64){
 
         // Do forward activations and store results
         // l = 0: input
@@ -134,138 +84,138 @@ impl NeuralNetwork {
         let input = input.transpose();
         let y_target = y_target.transpose();
 
-        // dim!(self.weights[0]);
-        // dim!(input);
-        // dim!(self.weights[1]);
+        // // dim!(self.weights[0]);
+        // // dim!(input);
+        // // dim!(self.weights[1]);
 
-        // Forward pass: Z = W * A + b
+        // // Forward pass: Z = W * A + b
 
-        let mut activation = input.clone();
-        let mut activations: Vec<DVector<f64>> = vec![input.clone()];
-        let mut zs: Vec<DVector<f64>> = Vec::new();
+        // // Hidden layer input
+        // let hidden_in = &self.weights[0] * &input + &self.biases[0];
+        // let hidden_out = &hidden_in.map(|x| utils::sigmoid(x));
 
-        for (b, w) in self.biases.iter().zip(self.weights.iter()) {
-            let z = w * activation + b;
-            zs.push(z.clone());
-            activation = z.map(|z_elem| utils::sigmoid(z_elem));
-            activations.push(activation.clone());
-        }
+        // // Output layer input
+        // let output_in = &self.weights[1] * hidden_out + &self.biases[1];
+        // let output_out = &output_in.map(|x| utils::sigmoid(x));
 
-        // backward pass
-        let mut nabla_b: Vec<DVector<f64>> = self.biases.iter().map(|b| DVector::zeros(b.nrows())).collect();
-        let mut nabla_w: Vec<DMatrix<f64>> = self.weights.iter().map(|w| DMatrix::zeros(w.nrows(), w.ncols())).collect();
+        // // dim!(output_in);
+        // // dim!(output_out);
 
-        let mut delta = (activations.last().unwrap() - &y_target).component_mul(&zs.last().unwrap().map(utils::sigmoid_derivative));
-        nabla_b.insert(nabla_b.len() - 1, delta.clone());
-        nabla_w.insert(nabla_w.len() - 1, delta.clone() * activations[activations.len() - 2].transpose());
+        // let a_0 = input;
+        // let a_1 = hidden_out;
+        // let a_2 = output_out;
 
-        for l in 2..self.spec.len() {
-            let z = &zs[zs.len() - l];
-            let sp = z.map(utils::sigmoid_derivative);
-            dim!(sp);
-            dim!(delta);
-            let delta_local = self.weights[self.weights.len() - l + 1].transpose() * delta.component_mul(&sp);
-            delta = delta_local;
-            nabla_b.insert(nabla_b.len() - l, delta.clone());
-            nabla_w.insert(nabla_w.len() - l, delta.clone() * activations[activations.len() - l - 1].transpose());
-        }
-
-        (nabla_b, nabla_w)
+        // let z_1 = hidden_in;
+        // let z_2 = output_in;
 
 
+        let (z_v, a_v) = self.forward_sample(&input);
 
-    }
+        // let a_0 = a_v[0].clone();
+        // let a_1 = a_v[1].clone();
+        // let a_2 = a_v[2].clone();
+        // let z_1 = z_v[0].clone();
+        // let z_2 = z_v[1].clone();
 
-
-    pub fn fit(&self, input: &RowDVector<f64>, y_target: &RowDVector<f64>, alpha: f64) -> (DMatrix<f64>, DMatrix<f64>, DVector<f64>, DVector<f64>, f64){
-
-        // Do forward activations and store results
-        // l = 0: input
-        // l = 1: hidden
-        // l = 2: output (aka L)
-
-        // TODO Reconfigure input and y_target as column vectors
-
-        let input = input.transpose();
-        let y_target = y_target.transpose();
-
-        // dim!(self.weights[0]);
-        // dim!(input);
-        // dim!(self.weights[1]);
-
-        // Forward pass: Z = W * A + b
-
-        // Hidden layer input
-        let hidden_in = &self.weights[0] * &input + &self.biases[0];
-        let hidden_out = &hidden_in.map(|x| utils::sigmoid(x));
-
-        // Output layer input
-        let output_in = &self.weights[1] * hidden_out + &self.biases[1];
-        let output_out = &output_in.map(|x| utils::sigmoid(x));
-
-        // dim!(output_in);
-        // dim!(output_out);
-
-        let a_0 = input;
-        let a_1 = hidden_out;
-        let a_2 = output_out;
-
-        let z_1 = hidden_in;
-        let z_2 = output_in;
 
         // Backward pass: d_l = (W_l+1)^T * d_l+1 * f'(z_l)
 
-        let delta_L = (a_2 - &y_target).component_mul(&z_2.map(|x| utils::sigmoid_derivative(x)));
+
+        // Iterate backwards from L-1 to 1 (layers, stopping at idx 1)
+        let mut delta_v: Vec<DVector<f64>> = Vec::new();
+        let mut dC_dW_v: Vec<DMatrix<f64>> = Vec::new();
+
+        let cost_derivative = a_v.last().unwrap() - &y_target;
+
+        // Add to vectors, then reverse
+        // TODO replace z_2 with z_v[1], a_1 with a_v[0]
+        {
+            delta_v.push(cost_derivative.component_mul(&z_v.last().unwrap().map(|x| utils::sigmoid_derivative(x)))); // Output layer
+            let v = delta_v.last().unwrap() * a_v[a_v.len() - 2].transpose();
+            dC_dW_v.push(v);
+        }
 
 
-        let delta_1 = (self.weights[1].transpose() * &delta_L).component_mul(&z_1.map(|x| utils::sigmoid_derivative(x)));
-        //let delta_0 = (self.weights[0].transpose() * &delta_1).component_mul(&a_0.map(|x| utils::sigmoid_derivative(x)));
+        for l in (1..(self.weights.len())).rev(){
+            // println!("---------------- {} ----------------", l);
+            // TODO figure out proper indexes for z_v
+            let delta_l = (self.weights[l].transpose() * delta_v.last().unwrap()).component_mul(&z_v[l-1].map(|x| utils::sigmoid_derivative(x)));
+            // delta_l self.weights[1]   delta L  z_v[0]
+            // mat!(&delta_l);
+            delta_v.push(delta_l);
 
-        // nabla_w[-l] = np.dot(delta, activations[-l-1].transpose())
-        // dC / dW
+            // mat!(delta_v.last().unwrap());
 
-        // l = 2
-        let dC_dW_L = &delta_L * a_1.transpose();
-
-        // l = 1
-        let dC_dW_1 = &delta_1 * a_0.transpose();
+            let v = delta_v.last().unwrap() * a_v[l-1].transpose();
+            // delta_1    av[1]
+            dC_dW_v.push(v);
+        }
 
 
-        // let nabla_w = vec![dC_dW_1, dC_dW_L];
-        // let nabla_b = vec![delta_1, delta_L];
+        // Gammel impl
+
+        // // Trenger: (error)-, z2*, produserer delta2-
+        // let delta_L = (&a_2 - &y_target).component_mul(&z_2.map(|x| utils::sigmoid_derivative(x)));
+
+        // // Trenger w1, delta2, z1* produserer delta1
+        // let delta_1 = (self.weights[1].transpose() * &delta_L).component_mul(&z_1.map(|x| utils::sigmoid_derivative(x)));
+
+        // // dC / dW
+
+        // // l = 2
+        // let dC_dW_L: DMatrix<f64> = &delta_L * a_1.transpose();
+
+        // // l = 1
+        // let dC_dW_1: DMatrix<f64> = &delta_1 * a_0.transpose();
 
 
-        let cost = (1./2.)*(&y_target - a_2).norm_squared();
+
+
+        let cost = (1./2.)*(&y_target - a_v.last().unwrap()).norm_squared();
 
         // mat!(y_target);
         // mat!(a_2);
 
-        (dC_dW_1, dC_dW_L, delta_1, delta_L, cost)
+        // Test
+        delta_v.reverse();
+        dC_dW_v.reverse();
 
+        // mat!(dC_dW_v[0]);
+        // mat!(dC_dW_1);
+
+        // mat!(delta_1);
+        // mat!(a_0);
+
+        // Original
+        // delta_v.clear();
+        // dC_dW_v.clear();
+
+        // delta_v.push(delta_L.column(0).into());
+        // delta_v.push(delta_1.column(0).into());
+
+        // dC_dW_v.push(dC_dW_L);
+        // dC_dW_v.push(dC_dW_1);
+
+        // delta_v.reverse();
+        // dC_dW_v.reverse();
+
+
+
+        // panic!("abc");
+
+        (dC_dW_v, delta_v, cost)
+
+        // (dC_dW_1, dC_dW_L, delta_1, delta_L, cost)
 
  
     }
 
-    pub fn predict(&self, x: &RowDVector<f64>) -> DVector<f64> {
 
-        let input = x.transpose();
+    pub fn predict(&self, input: &DVector<f64>) -> DVector<f64> {
 
-        // dim!(self.weights[0]);
-        // dim!(input);
+        let (_, a_v) = self.forward_sample(input);
+        a_v.last().unwrap().clone()
 
-        // Hidden layer input
-        let hidden_in = &self.weights[0] * &input + &self.biases[0];
-        let hidden_out = &hidden_in.map(|x| utils::sigmoid(x));
-
-        // Output layer input
-        let output_in = &self.weights[1] * hidden_out + &self.biases[1];
-        let output_out = &output_in.map(|x| utils::sigmoid(x));
-
-
-        // dim!(output_out);
-
-        let vec_out: DVector<f64> = output_out.column(0).into();
-        vec_out
     }
 
     pub fn cost(&self, y_pred: &RowDVector<f64>, y_target: &DVector<f64>) -> f64 {
@@ -275,8 +225,6 @@ impl NeuralNetwork {
     pub fn train(&mut self, input: &DMatrix<f64>, target: &DMatrix<f64>, alpha: f64, epochs: u64) -> DMatrix<f64> {
 
         // Extend input with bias
-        // let bias = DVector::from_element(input.nrows(), 1.0);
-        // let x = utils::append_column(&input, &bias);
         let x = input;
 
         // Forward pass
@@ -295,22 +243,50 @@ impl NeuralNetwork {
                 // let y_pred_row: RowDVector<f64> = y_pred.row(i).into();
                 let y_row: RowDVector<f64> = target.row(i).into();
 
-                self.fit(&input_row,&y_row, alpha/x.nrows() as f64);
+                // self.fit(&input_row,&y_row, alpha/x.nrows() as f64);
 
-                let (dC_dW_1, dC_dW_L, delta_1, delta_L, sample_cost) = self.fit(&input_row,&y_row, alpha/x.nrows() as f64);
+                // let (dC_dW_1, dC_dW_L, delta_1, delta_L, sample_cost) = self.fit(&input_row,&y_row, alpha/x.nrows() as f64);
+                let (dC_dW_v, delta_v, sample_cost) = self.fit(&input_row,&y_row, alpha/x.nrows() as f64);
 
                 // dim!(self.weights[1]);
                 // dim!((alpha/(x.nrows() as f64)) * &dC_dW_1);
 
                 // Update weights
-                self.weights[1] = &self.weights[1] - (alpha/(x.nrows() as f64)) * &dC_dW_L;
-                self.weights[0] = &self.weights[0] - (alpha/(x.nrows() as f64)) * &dC_dW_1;
+
+                // let dC_dW_L = dC_dW_v[1].clone();
+                // let w_test = (alpha/(x.nrows() as f64)) * dC_dW_L;
+
+                // dim!(self.weights[1]);
+                // dim!(w_test);
+
+                // Update weights
+                for l in 0..self.weights.len(){
+                    self.weights[l] = &self.weights[l] - (alpha/(x.nrows() as f64)) * &dC_dW_v[l];
+                }
 
                 // Update biases
-                self.biases[1] = &self.biases[1] - (alpha/(x.nrows() as f64)) * delta_L;
-                self.biases[0] = &self.biases[0] - (alpha/(x.nrows() as f64)) * delta_1;
+                for l in 0..self.biases.len(){
+                    self.biases[l] = &self.biases[l] - (alpha/(x.nrows() as f64)) * &delta_v[l];
+                }
+
+
+                // self.weights[1] = &self.weights[1] - (alpha/(x.nrows() as f64)) * &dC_dW_v[1];
+                // self.weights[0] = &self.weights[0] - (alpha/(x.nrows() as f64)) * &dC_dW_v[0];
+
+                // // Update biases
+                // self.biases[1] = &self.biases[1] - (alpha/(x.nrows() as f64)) * &delta_v[1];
+                // self.biases[0] = &self.biases[0] - (alpha/(x.nrows() as f64)) * &delta_v[0];
+
+                // // Update weights
+                // self.weights[1] = &self.weights[1] - (alpha/(x.nrows() as f64)) * &dC_dW_L;
+                // self.weights[0] = &self.weights[0] - (alpha/(x.nrows() as f64)) * &dC_dW_1;
+
+                // // Update biases
+                // self.biases[1] = &self.biases[1] - (alpha/(x.nrows() as f64)) * delta_L;
+                // self.biases[0] = &self.biases[0] - (alpha/(x.nrows() as f64)) * delta_1;
 
                 cost += sample_cost / (x.nrows() as f64);
+
             }
 
             if(n % 1000 == 0){
@@ -320,6 +296,14 @@ impl NeuralNetwork {
             //let delta = self.partial_derivative(&y_pred, target);
 
         }
+
+        let input_transposed = input.transpose();
+
+        dim!(input);
+        dim!(input_transposed);
+
+
+        self.forward_sample(&input_transposed.column(0).into());
 
         // mat!(self.weights[0]);
         // mat!(self.weights[1]);
