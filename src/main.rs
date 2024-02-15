@@ -1,22 +1,15 @@
  
-#![allow(non_snake_case)]
-
-// use rand::Rng;
-// use rayon::{prelude::*, result};
-
 extern crate nalgebra as na;
-use na::{DMatrix, DVector};
 
 extern crate argparse;
-// use argparse::{ArgumentParser, Store};
-// use plotters::prelude::*;
 
 mod mat_loader;
 mod utils;
 mod nn;
+mod data;
 
-// use matio_rs::MatFile;
-// use approx::assert_abs_diff_eq;
+
+use crate::data::Dataset;
 
 /*
 
@@ -31,48 +24,36 @@ Ideas:
 */
 
 fn main(){
+
+    
+    // Define network
     let mut nn = nn::NeuralNetwork::new(vec![2, 2, 1]);
 
-    let x = DMatrix::from_row_iterator(4, 2, [
-        0., 0., 
-        0., 1., 
-        1., 0., 
-        1., 1., 
-    ].iter().cloned());
 
-    let y = DMatrix::from_row_iterator(4, 1, [
-        0.,
-        1.,
-        1.,
-        0.,
-    ].iter().cloned());
+    // Load dataset
+    let dataset = data::JsonDataset::new("data/xor.json".to_string());
+
+
+    // Train network
+    let x = dataset.get_x();
+    let y = dataset.get_y();
 
     nn.train(&x, &y, 5.0, 10000);
 
 
-    let test: na::Matrix<f64, na::Dyn, na::Dyn, na::VecStorage<f64, na::Dyn, na::Dyn>> = DMatrix::from_row_iterator(4, 2, [
-        0., 0., 
-        0., 1., 
-        1., 0., 
-        1., 1., 
-    ].iter().cloned());
-
-
+    // Test network
     let mut correct = 0;
-    x.row_iter().zip(y.row_iter()).for_each(|(x_row, y_row)| {
+    x.column_iter().zip(y.column_iter()).for_each(|(x_col, y_col)| {
 
-        let col: DVector<f64> = x_row.transpose();
+        let result = nn.predict(&x_col.into());
 
-        // let result = nn.predict(&x_row.into());
-        let result = nn.predict(&col);
-
-        let cost = nn.cost(&y_row.into(), &result);
-        println!("{} XOR {} = {:.5}, expected: {} (cost: {:.5})", x_row[0], x_row[1], result[0], y_row[0],cost);
-        if (result[0] - y_row[0]).abs() < 0.5 {
+        let cost = nn.cost(&y_col.into(), &result);
+        println!("{} XOR {} = {:.5}, expected: {} (cost: {:.5})", x_col[0], x_col[1], result[0], y_col[0], cost);
+        if (result[0] - y_col[0]).abs() < 0.5 {
             correct += 1;
         }
     });
-    println!("Correct: {}/{}", correct, x.nrows());
+    println!("Correct: {}/{}", correct, x.ncols());
 
 
 }
