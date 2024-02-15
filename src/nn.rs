@@ -1,21 +1,77 @@
+use std::path::Path;
 use std::vec;
 
 use nalgebra::{DMatrix, DVector, RowDVector};
 use crate::{dim, mat, utils};
 
+use serde::{Serialize, Deserialize};
+use std::fs::File;
+use std::io::{self, BufReader, BufWriter};
 
-pub struct NeuralNetwork {
+
+// NN utils
+pub fn make_weights_matrix(input_dim: u64, output_dim: u64) -> DMatrix<f64> {
+    DMatrix::from_row_iterator(output_dim as usize, input_dim as usize, (0..input_dim*output_dim).map(|_| rand::random::<f64>()))
+}
+
+
+pub trait NeuralNetwork{
+    fn get_weights(&self) -> &Vec<DMatrix<f64>>;
+    fn get_biases(&self) -> &Vec<DVector<f64>>;
+
+    fn save_model(&self, filename: &str) -> io::Result<()>;
+    fn from_file(filename: &str) -> io::Result<SimpleNeuralNetwork>;
+}
+
+
+pub struct SimpleNeuralNetwork {
     spec: Vec<u64>,
     weights: Vec<DMatrix<f64>>,
     biases: Vec<DVector<f64>>,
 }
 
-pub fn make_weights_matrix(input_dim: u64, output_dim: u64) -> DMatrix<f64> {
-    DMatrix::from_row_iterator(output_dim as usize, input_dim as usize, (0..input_dim*output_dim).map(|_| rand::random::<f64>()))
+
+impl NeuralNetwork for SimpleNeuralNetwork {
+    fn get_weights(&self) -> &Vec<DMatrix<f64>> {
+        &self.weights
+    }
+
+    fn get_biases(&self) -> &Vec<DVector<f64>> {
+        &self.biases
+    }
+    
+    fn save_model(&self, filename: &str) -> io::Result<()> {
+        let weights = self.get_weights();
+        let biases = self.get_biases();
+        let spec = &self.spec.clone();
+
+        // Serialize your weights and biases here
+        let file = File::create(Path::new(filename))?;
+        let writer = BufWriter::new(file);
+
+        // Using serde_json for example. You could also use bincode or another format if preferred
+        serde_json::to_writer(writer, &(spec, weights, biases))?;
+
+        Ok(())
+    }
+
+    fn from_file(filename: &str) -> io::Result<SimpleNeuralNetwork> {
+        let file = File::open(Path::new(filename))?;
+        let reader = BufReader::new(file);
+
+        // Deserialize the JSON content back into weights and biases
+        let (spec, weights, biases): (Vec<u64>, Vec<DMatrix<f64>>, Vec<DVector<f64>>) = serde_json::from_reader(reader)?;
+
+        Ok(SimpleNeuralNetwork {
+            spec,
+            weights,
+            biases,
+        })
+    }
 }
 
-impl NeuralNetwork {
-    pub fn new(spec: Vec<u64>) -> NeuralNetwork {
+impl SimpleNeuralNetwork {
+    pub fn new(spec: Vec<u64>) -> SimpleNeuralNetwork {
 
         // At least 1 hidden layer
         assert!(spec.len() > 2);
@@ -24,7 +80,7 @@ impl NeuralNetwork {
 
         let biases = spec.iter().skip(1).map(|s| {DVector::from_element(*s as usize, 1.0)}).collect();
 
-        let nn = NeuralNetwork {
+        let nn = SimpleNeuralNetwork {
             spec: spec.clone(),
             weights: weights,
             biases: biases,
